@@ -29,6 +29,41 @@ import numpy as np
 # Allow for plotting histogram graphs
 import matplotlib.pyplot as plt
 
+# Enable creating the windows breaking list connectivity
+import copy
+
+
+# Multi-threading for faster operating when utilising windows
+from threading import *
+
+class Window:
+	"""
+	Attributes:
+		x:		x coordinate of image centre point
+		y:		y coordinate of image centrepoint
+		width:	Width of the window
+		content: NxN array containing the contents of the window
+
+	"""
+###### Reconfigure to support inherriting image properies
+	def __init__(self,wholeImage, centerPoint, width):
+		self.x, self.y = centerPoint
+		self.content = copy.copy(wholeImage.image[ (self.x-width):(self.x+width), (self.y-width):(self.y+width) ])
+		self.cp = width+1
+		self.width = (2*width)+1
+
+	def cpVal(self):
+		# Returns the value of the pixel at the centre of the window
+		return self.content[self.cp-1,self.cp-1]
+
+	def average(self):
+		## Averages the values within a window and then fills the window with the new average value
+		averageValue = self.content.mean() # Numpy array format is notably faster than iteration over i,j of array and averaging
+
+		self.content.fill(averageValue)
+
+
+
 class Image:
 	# Define a class that contains an image and its associated name
 	'Common class for an image'
@@ -40,6 +75,8 @@ class Image:
 	"""
 	def __init__(self, *args):
 		# Constructor for the class
+
+		### Should redo such that importing the image is a seperate step to constructing the shell
 
 		# Generate a list of files within the current directory for validation
 		listOfFiles = self._listFiles()
@@ -132,17 +169,19 @@ class Image:
 		newStruct = Image('empty')
 		# Hard assigns to stop altering original
 		imageM, imageN = self.imageSize()
-
-		newStruct.image = np.add(np.zeros([imageM, imageN],'uint8'), self.image)
+		newImage = np.zeros([imageM, imageN],'uint8')
+		for i in range(imageM):
+			for j in range(imageN):
+				newImage[i,j] = self.image[i,j]
+		newStruct.image = newImage
+		
 		newStruct.name = 'Duplicate' + self.name
 		newStruct.transforms = self.transforms + ['Duplicate']
 		return newStruct
 
 	def mask(self, mask):
 		# Function to apply a mask provided to the image
-		print('Applying mask')
 		self.image = np.minimum(self.image, mask.image)
-		print('Mask done')
 
 	def overlay(self, imageOver, mask):
 		# Function to overlay two images of the same size using a defined mask
@@ -181,7 +220,7 @@ class Image:
 		print(imageMN)
 
 		# Initialise an array for counting the occurences of each grey value
-		nkCount = np.zeros(256, 'uint8')
+		nkCount = np.zeros(256)
 
 		for i in range(imageM):
 			for j in range(imageN):
@@ -194,6 +233,8 @@ class Image:
 		plt.plot(probRk)
 		plt.xlim(0,255)
 		plt.show()
+
+
 	##########################################
 	##										##
 	## Methods (Point Operator Filters)		##
@@ -223,42 +264,48 @@ class Image:
 				newImage[i,j] = int((self.image[i,j] - oMin) * conversionRatio + nMin)
 		self.updateImage(newImage, 'normaliseHistogram' + str(nMin) + '_' + str(nMax))
 
-	def POequalise(self,levels,offset):
-
+	def POequalise(self,levels,ignore,offset):
+		""" 
+		Inputs:
+		self	= I dont understand object orientated enough to explain why self
+		levels  = the number of unique luminence levels in the image
+		ignore	= an array containing all luminence values to be ignored for the current array processing
+		"""
 		# Create an empty array to populate with the new iamge information
 		imageM, imageN = self.imageSize()
 		imageMN = imageM * imageN * 1.0 
 		newImage = np.zeros([imageM, imageN],'uint8')
 
 		# Initialise an array for counting the occurences of each grey value
-		skMap = np.zeros([256], 'uint8')
-		greyScaleMap = np.zeros(256)
+		skMap = np.zeros([256])
+		greyScaleMap = np.zeros(256,'uint8')
 
+		pixelCount = 0
 
-		## Occurence Rate ares broken
+		if ((levels + offset) > 255):
+			__printSpacer__('Warning: DC-offset + desired level range exceeds 255, high values may show as black')
+		
 		for i in range(imageM):
 			for j in range(imageN):
-				skMap[self.image[i,j]] = skMap[self.image[i,j]] + 1.0
-
+				value = self.image[i,j]
+				if value in ignore:
+					skMap[value] = 0
+				else:
+					skMap[value] = int(skMap[value]+1)
+					pixelCount+=1
 
 
 		for n in range(256):
-			greyScaleMap[n] =  skMap[n]/ imageMN
+			## Generating incredibly low values for percentage chance (sigma function missing)
+			greyScaleMap[n] =  ((np.sum(skMap[0:n]) / pixelCount ) * (levels-1)) + offset
+
 
 		for si in range(imageM):
 			for sj in range(imageN):
 				newImage[si,sj] = greyScaleMap[self.image[si,sj]]
-		print(imageMN)
-		print(np.sum(skMap))
-
-		self.updateImage(newImage, 'equaliseHistogram' + '_' + str(levels) + '_' + str(offset))
 
 
-
-
-
-
-
+		self.updateImage(newImage, 'equaliseHistogram' + '_' + str(levels) + '_' + str(ignore) + '_' + str(offset))
 
 	def PObitSlice(self, lMin, lMax):
 		# Function to produce the parts of the image within a certain bit range, 
@@ -283,6 +330,85 @@ class Image:
 		newImage = 255 - initialImage
 		self.updateImage(newImage, 'Invert')
 
+	##########################################
+	##										##
+	## Methods (Group Operator Filters)		##
+	##										##
+	##########################################
+
+	def createWindows(self, windowSize):
+		## Function to create an array containing NxN sized window structures for the whole image
+		imageM, imageN = self.imageSize()
+
+		windowArray = []
+
+		for i in range(windowSize,(imageM-windowSize)):
+			for j in range(windowSize,(imageN-windowSize)):
+				windowArray.append( Window(self,[i,j],windowSize))
+
+		__printSpacer__(str(len(windowArray)) +' windows of size ' + str(windowSize*2 +1) +'x'+str(windowSize*2 +1)+ ' created from image')
+
+		return windowArray
+
+	def processWindows(self, windowArray):
+		## Function to create a new image comprised of the centre points of each individual window
+
+		imageM, imageN = self.imageSize()
+
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		for window in windowArray:
+			newImage[window.x, window.y] = window.cpVal()
+
+		__printSpacer__('Windows loaded into image')
+
+		self.updateImage(newImage, '')
+
+	def mean(self,windowSize):
+		windowArray = self.createWindows(windowSize)
+
+		windowThreads = []
+		threadCount = 0
+		for window in windowArray:
+			window.average()
+		# 	windowThread = Thread(target = window.average())
+		# 	windowThreads.append(windowThread)
+		# 	windowThread.start()
+		# 	threadCount+=1
+			
+		# print(str(threadCount) + ' Threads Open')
+
+		# for thread in windowThreads:
+		# 	thread.join()
+		# 	threadCount -=1
+		
+		# print(str(threadCount) + ' Threads Open')
+
+		self.processWindows(windowArray)
+
+
+
+
+
+
+
+
+
+	##########################################
+	##										##
+	## Methods (Filter Applications)		##
+	##										##
+	##########################################
+
+	def highlightRange(self,lBound,uBound,dcGain,levels):
+		mask = self.PObitSlice(lBound,uBound)
+		rangePixels = self.duplicate()
+		rangePixels.mask(mask)
+		rangePixels.POequalise(levels,[0],dcGain)
+		mask.POnegImage()
+		self.overlay(rangePixels,mask)
+
+
 
 
 
@@ -291,15 +417,15 @@ class Image:
 def __printSpacer__(*args):
 	# Function created to print a line of asterix, made seperate to make code neater
 	if (0 == len(args)): # If no arguments are included then print an asterix line spacer
-		print('')
 		print('************************************************************************************')
 		print('')
 	else:				# If arguments are provided then print the argument surrounded by asterix'
-		print('')
-		print('************************************************************************************')
-		print(args[0])
-		print('************************************************************************************')
-		print('')
+		for i in range(len(args)):
+			print('************************************************************************************')
+			print('')
+			print(args[i])
+			print('')
+
 
 
 
@@ -327,11 +453,20 @@ def removeBlack(arg):
 	arg.mask(mask)
 	arg.showImage()
 
+a.showImage()
+
+# testWindow = Window(a, [100,100], 50)
+# imshow('test', testWindow.content)
+# waitKey(0)
+# testWindow.average()
+# imshow('test', testWindow.content)
+# waitKey(0)
+
+a.mean(2)
 
 
 a.showImage()
-
-a.POequalise(255,0)
+a.highlightRange(20,255,0,255)
 a.showImage()
 
 
