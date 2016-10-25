@@ -277,7 +277,7 @@ class Image:
 		newImage = np.zeros([imageM, imageN],'uint8')
 
 		# Initialise an array for counting the occurences of each grey value
-		skMap = np.zeros([256])
+		occurenceMap = np.zeros([256])
 		greyScaleMap = np.zeros(256,'uint8')
 
 		pixelCount = 0
@@ -285,19 +285,17 @@ class Image:
 		if ((levels + offset) > 255):
 			__printSpacer__('Warning: DC-offset + desired level range exceeds 255, high values may show as black')
 		
-		for i in range(imageM):
-			for j in range(imageN):
-				value = self.image[i,j]
-				if value in ignore:
-					skMap[value] = 0
-				else:
-					skMap[value] = int(skMap[value]+1)
-					pixelCount+=1
+		for nVal in range(0,255):
+			if nVal in ignore:
+				occurenceMap[nVal] = 0
+			else:
+				occurenceMap[nVal] = (self.image==nVal).sum()
+				pixelCount += occurenceMap[nVal]
 
 
 		for n in range(256):
 			## Generating incredibly low values for percentage chance (sigma function missing)
-			greyScaleMap[n] =  ((np.sum(skMap[0:n]) / pixelCount ) * (levels-1)) + offset
+			greyScaleMap[n] =  ((np.sum(occurenceMap[0:n]) / pixelCount ) * (levels-1)) + offset
 
 
 		for si in range(imageM):
@@ -462,7 +460,7 @@ a.showImage()
 # imshow('test', testWindow.content)
 # waitKey(0)
 
-a.mean(2)
+#a.mean(2)
 
 
 a.showImage()
