@@ -14,6 +14,7 @@
 
 # OpenCV used for loading images
 from cv2 import *
+import cv2
 
 
 # Modules below used for listing available images in the current directory
@@ -26,11 +27,13 @@ from sys import exit
 import sys
 import numpy as np
 
-# Allow for plotting histogram graphs
+# Allow for plotting histogram graphs and 3d graphs http://matplotlib.org/mpl_toolkits/mplot3d/tutorial.html
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 # Enable creating the windows breaking list connectivity
 import copy
+from math import*
 
 
 # Multi-threading for faster operating when utilising windows
@@ -45,10 +48,9 @@ class Window:
 		content: NxN array containing the contents of the window
 
 	"""
-###### Reconfigure to support inherriting image properies
 	def __init__(self,wholeImage, centerPoint, width):
 		self.x, self.y = centerPoint
-		self.content = copy.copy(wholeImage.image[ (self.x-width):(self.x+width), (self.y-width):(self.y+width) ])
+		self.content = copy.copy(wholeImage.image[ (self.x-width):(self.x+width+1), (self.y-width):(self.y+width+1) ])
 		self.cp = width+1
 		self.width = (2*width)+1
 
@@ -58,9 +60,46 @@ class Window:
 
 	def average(self):
 		## Averages the values within a window and then fills the window with the new average value
-		averageValue = self.content.mean() # Numpy array format is notably faster than iteration over i,j of array and averaging
+		averageValue = self.content.sum() / (self.width * self.width)
 
 		self.content.fill(averageValue)
+
+	def filter(self, filter):
+		averageGaussianValue = (self.content * filter).sum() / filter.sum()
+		self.content.fill(averageGaussianValue)
+
+	def equalise(self, levels, ignore, offset):
+		occurenceMap = np.zeros([256])
+		greyScaleMap = np.zeros(256,'uint8')
+		pixelCount=0
+		for nVal in range(0,255):
+			if nVal in ignore:
+				occurenceMap[nVal] = 0
+			else:
+				occurenceMap[nVal] = (self.content==nVal).sum()
+				pixelCount += occurenceMap[nVal]
+		for n in range(256):
+			## Generating incredibly low values for percentage chance (sigma function missing)
+			greyScaleMap[n] =  ((np.sum(occurenceMap[0:n]) / pixelCount ) * (levels-1)) + offset
+		self.content.fill(greyScaleMap[self.content[self.cp,self.cp]])
+
+	def median(self):
+		medianValue = np.median(self.content)
+		self.content.fill(medianValue)
+
+	def trimmedMean(self,nOmit):
+		numValues = self.width * self.width
+		halfPoint = ceil(numValues/2)
+		values = np.reshape(self.content,numValues)
+
+
+
+		order = values.argsort()
+		ranks = order.argsort()
+
+		print(str(ranks))
+
+
 
 
 
@@ -148,6 +187,24 @@ class Image:
 			print(entry)
 		__printSpacer__()
 
+	def _genBorders(self, amount):
+		bordered = self.image
+		for val in range(amount):
+			bordered = np.vstack([bordered , bordered[-1,:]])
+			bordered = np.vstack([bordered[0,:] , bordered])
+			bordered = bordered.transpose()
+			bordered = np.vstack([bordered , bordered[-1,:]])
+			bordered = np.vstack([bordered[0,:] , bordered])
+			bordered = bordered.transpose()
+		self.updateImage(bordered, 'Bordered')
+		return bordered
+
+	def _deBorders(self,amount):
+		imageM, imageN = self.imageSize()
+		debordered = self.image[amount:(imageM-amount), amount:(imageN-amount)]
+		# [amount,(imageM - amount)], [amount,(imageN - amount)]
+		self.updateImage(debordered, 'deBordered')
+
 
 	##########################################
 	##										##
@@ -208,7 +265,7 @@ class Image:
 
 	def saveImage(self):
 		# Function to save an image to file after processing
-		imwrite(self.name + "_".join(self.transforms) + ".png", self.image)
+		imwrite("./outputs/"+self.name + "_".join(self.transforms) + ".png", self.image)
 
 	def histogram(self): 
 		# Function to create a histogram of an image's greyscale levels using the formula:
@@ -233,7 +290,6 @@ class Image:
 		plt.plot(probRk)
 		plt.xlim(0,255)
 		plt.show()
-
 
 	##########################################
 	##										##
@@ -262,7 +318,7 @@ class Image:
 		for i in range(imageM):
 			for j in range(imageN):
 				newImage[i,j] = int((self.image[i,j] - oMin) * conversionRatio + nMin)
-		self.updateImage(newImage, 'normaliseHistogram' + str(nMin) + '_' + str(nMax))
+		self.updateImage(newImage, 'normalise')
 
 	def POequalise(self,levels,ignore,offset):
 		""" 
@@ -277,7 +333,7 @@ class Image:
 		newImage = np.zeros([imageM, imageN],'uint8')
 
 		# Initialise an array for counting the occurences of each grey value
-		skMap = np.zeros([256])
+		occurenceMap = np.zeros([256])
 		greyScaleMap = np.zeros(256,'uint8')
 
 		pixelCount = 0
@@ -285,26 +341,22 @@ class Image:
 		if ((levels + offset) > 255):
 			__printSpacer__('Warning: DC-offset + desired level range exceeds 255, high values may show as black')
 		
-		for i in range(imageM):
-			for j in range(imageN):
-				value = self.image[i,j]
-				if value in ignore:
-					skMap[value] = 0
-				else:
-					skMap[value] = int(skMap[value]+1)
-					pixelCount+=1
+		for nVal in range(0,255):
+			if nVal in ignore:
+				occurenceMap[nVal] = 0
+			else:
+				occurenceMap[nVal] = (self.image==nVal).sum()
+				pixelCount += occurenceMap[nVal]
 
 
 		for n in range(256):
 			## Generating incredibly low values for percentage chance (sigma function missing)
-			greyScaleMap[n] =  ((np.sum(skMap[0:n]) / pixelCount ) * (levels-1)) + offset
+			greyScaleMap[n] =  ((np.sum(occurenceMap[0:n]) / pixelCount ) * (levels-1)) + offset
 
 
 		for si in range(imageM):
 			for sj in range(imageN):
 				newImage[si,sj] = greyScaleMap[self.image[si,sj]]
-
-
 		self.updateImage(newImage, 'equaliseHistogram' + '_' + str(levels) + '_' + str(ignore) + '_' + str(offset))
 
 	def PObitSlice(self, lMin, lMax):
@@ -330,6 +382,28 @@ class Image:
 		newImage = 255 - initialImage
 		self.updateImage(newImage, 'Invert')
 
+	def POfft(self):
+		f = np.fft.fft2(self.image)
+		fFhift = np.fft.fftshift(f)
+		self.updateImage(fFhift,'fft')
+
+	def POfftMag(self):
+		# Function to perform a fast fourier transform on an image and subsequently
+		# generate the resulting magnitude spectrum
+		self.POfft()
+		magnitude_spectrum = 20*np.log(np.abs(self.image))
+		self.updateImage(magnitude_spectrum,'Magfft')
+
+	def POifft(self):
+		ifShift = np.fft.ifftshift(self.image)
+		ifft = np.abs(np.fft.ifft2(ifShift))
+		self.updateImage(ifft,'ifft')
+		# Re normalise results to the range of grayscale values
+		self.POnormalise(0,255)
+
+
+		
+
 	##########################################
 	##										##
 	## Methods (Group Operator Filters)		##
@@ -349,42 +423,144 @@ class Image:
 		__printSpacer__(str(len(windowArray)) +' windows of size ' + str(windowSize*2 +1) +'x'+str(windowSize*2 +1)+ ' created from image')
 
 		return windowArray
+		
+	def GOmean(self,windowSize):
 
-	def processWindows(self, windowArray):
-		## Function to create a new image comprised of the centre points of each individual window
+		windowArray = self.createWindows(windowSize)
 
 		imageM, imageN = self.imageSize()
 
 		newImage = np.zeros([imageM, imageN],'uint8')
 
 		for window in windowArray:
+			window.average()
 			newImage[window.x, window.y] = window.cpVal()
 
-		__printSpacer__('Windows loaded into image')
+		self.updateImage(newImage, 'mean')
 
-		self.updateImage(newImage, '')
+	def GOlinearGaussian(self, sigma):
 
-	def mean(self,windowSize):
-		windowArray = self.createWindows(windowSize)
+		winSize = 2*(3*sigma) + 1
 
-		windowThreads = []
-		threadCount = 0
+		self._genBorders(winSize+1)	
+
+		imageM, imageN = self.imageSize()
+
+		windowArray = self.createWindows(3*sigma)
+
+
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		# Make an empty array to contain the mask
+		gausMask = np.zeros([winSize,winSize])
+
+		# Populate the mask with calulated weightings
+		for i in range(3*sigma+1):
+			for j in range(3*sigma+1):
+				gVal = exp( - ( pow(3*sigma - i,2) + pow(3*sigma - j,2) ) / ( 2 * sigma * sigma ) )
+
+				# Gaussian mask is symettrical around centre so can set multiple values 
+				# at the same time
+				gausMask[i,j] = gVal
+				gausMask[i,winSize-j-1] = gVal
+				gausMask[winSize-i-1,j] = gVal
+				gausMask[winSize-i-1,winSize-j-1] = gVal
+
+
+
+		# Apply guasian mask
 		for window in windowArray:
-			window.average()
-		# 	windowThread = Thread(target = window.average())
-		# 	windowThreads.append(windowThread)
-		# 	windowThread.start()
-		# 	threadCount+=1
-			
-		# print(str(threadCount) + ' Threads Open')
+			window.filter(gausMask)
+			newImage[window.x, window.y] = window.cpVal()
 
-		# for thread in windowThreads:
-		# 	thread.join()
-		# 	threadCount -=1
+		self.updateImage(newImage, 'Gaussian')
+		self._deBorders(winSize+1)
+
+	def GOequalise(self, winSize, levels,ignore,offset):
+		sys.exit() ## This code takes an age to run
+
+		self._genBorders(winSize+1)	
+
+		imageM, imageN = self.imageSize()
 		
-		# print(str(threadCount) + ' Threads Open')
+		windowArray = self.createWindows(winSize)
 
-		self.processWindows(windowArray)
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		for window in windowArray:
+			window.equalise(levels,ignore,offset)
+			newImage[window.x, window.y] = window.cpVal()
+
+		self.updateImage(newImage, 'equaliseWindowedHistogram' + '_' + str(levels) + '_' + str(ignore) + '_' + str(offset))
+
+	##########################################
+	##										##
+	## Methods (Non Linear Filters)			##
+	##										##
+	##########################################
+
+	def NLmedian(self, winSize):
+		self._genBorders(winSize+1)	
+
+		imageM, imageN = self.imageSize()
+
+		windowArray = self.createWindows(winSize)
+	
+		newImage = np.zeros([imageM, imageN],'uint8')
+	
+		for window in windowArray:
+			window.median()
+			newImage[window.x, window.y] = window.cpVal()
+
+		self.updateImage(newImage, 'Median Filter: r=' + str(winSize))
+		self._deBorders(winSize+1)
+
+
+	def NLmeanTrimmed(self, winSize,trim):
+		self._genBorders(winSize+1)	
+
+		imageM, imageN = self.imageSize()
+
+		windowArray = self.createWindows(winSize)
+	
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		if trim > (winSize*winSize):
+			print('Please enter a trim value less than ' + str(winSize*winSize))
+			return
+	
+		for window in windowArray:
+			window.trimmedMean(trim)
+			newImage[window.x, window.y] = window.cpVal()
+
+		self.updateImage(newImage, 'Trimmed Mean Filter: r=' + str(winSize))
+		self._deBorders(winSize+1)
+
+	def NLmedianHuang(self,winSize):
+		## Code found in https://nomis80.org/ctmf.pdf
+		## Not original code
+		self._genBorders(winSize+1)
+
+
+		imageM, imageN = self.imageSize()
+
+		newImage = np.zeros([imageM, imageN],'uint8')
+		histogram = np.zeros([256])
+		weightings = array(range(0,256))
+
+		for i in range(2*winSize):
+			for j in range(2*winSize):
+				histogram[self.image[(i),(j)]] += 1
+
+		for i in range(winSize,(imageM-winSize)):
+			for j in range(winSize,(imageN-winSize)):
+				for k in range(-winSize,winSize):
+					histogram[self.image[(i+k),(j-winSize-1)]] -= 1
+					histogram[self.image[(i+k),(j+winSize)]] += 1
+				newImage[i,j] = np.median(histogram * weightings)
+
+		self.updateImage(newImage,'HuangMedian')
+		self._deBorders(winSize+1)
 
 
 
@@ -408,6 +584,12 @@ class Image:
 		mask.POnegImage()
 		self.overlay(rangePixels,mask)
 
+	def VisualiseFFT(self):
+		self.POfftMag()
+		self.POnormalise(0,255)
+
+
+
 
 
 
@@ -426,6 +608,11 @@ def __printSpacer__(*args):
 			print(args[i])
 			print('')
 
+	
+	
+
+
+
 
 
 
@@ -439,49 +626,26 @@ def __printSpacer__(*args):
 # destroyAllWindows()
 
 
+#a = Image('test.png')
+a = Image('foetus.png')
+
+a.NLmeanTrimmed(1, 0)
+
+a.showImage()
+
 #a = Image('NZjers1.png')
 #b = Image('NZjers1.png')`
-a = Image('foetus.png')
+#a = Image('foetus.png')
 #b = Image('foetus.png')
 
-#makeHistogram(a)
-#a.showImage()
-
-def removeBlack(arg):
-	mask = arg.PObitSlice(0,0)
-	mask.POnegImage()
-	arg.mask(mask)
-	arg.showImage()
-
-a.showImage()
-
-# testWindow = Window(a, [100,100], 50)
-# imshow('test', testWindow.content)
-# waitKey(0)
-# testWindow.average()
-# imshow('test', testWindow.content)
-# waitKey(0)
-
-a.mean(2)
 
 
-a.showImage()
-a.highlightRange(20,255,0,255)
-a.showImage()
-
-
-
-# mask = a.PObitSlice(0,100)
-#b.POnegImage()
-
-
-#a.overlay(b,mask)
-# #combineImages(a,b,mask)
-# a.mask(mask)
-# a.showImage()
-# a.histogram()
-# a.POnormalise(0,255)
-# a.histogram()
-# a.showImage()
+# for i in range(0,11):
+# 	a = Image('foetus.png')
+# 	a.NLmedian(i)
+# 	a.saveImage()
+# 	b = Image('NZjers1.png')
+# 	b.NLmedian(i)
+# 	b.saveImage()
 
 
