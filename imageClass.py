@@ -25,7 +25,10 @@ from glob import glob
 # Modules for function termination and writing to file
 from sys import exit
 import sys
+
+# Maths
 import numpy as np
+import scipy.signal
 
 # Allow for plotting histogram graphs and 3d graphs http://matplotlib.org/mpl_toolkits/mplot3d/tutorial.html
 import matplotlib.pyplot as plt
@@ -46,7 +49,6 @@ class Window:
 		y:		y coordinate of image centrepoint
 		width:	Width of the window
 		content: NxN array containing the contents of the window
-
 	"""
 	def __init__(self,wholeImage, centerPoint, width):
 		self.x, self.y = centerPoint
@@ -64,7 +66,7 @@ class Window:
 
 		self.content.fill(averageValue)
 
-	def filter(self, filter):
+	def gfilter(self, filter):
 		averageGaussianValue = (self.content * filter).sum() / filter.sum()
 		self.content.fill(averageGaussianValue)
 
@@ -87,17 +89,104 @@ class Window:
 		medianValue = np.median(self.content)
 		self.content.fill(medianValue)
 
+	def snr(self):
+		if not self.content.std() == 0:
+			val = self.content.mean() / self.content.std()
+		else:
+			val = 0
+		self.content.fill(val)
+
 	def trimmedMean(self,nOmit):
 		numValues = self.width * self.width
 		halfPoint = ceil(numValues/2)
-		values = np.reshape(self.content,numValues)
+ 		
+ 		sortedVal = np.sort(self.content, axis=None, kind='mergesort')
+ 		trimmed = sortedVal[nOmit:-nOmit]
+ 		self.content.fill(trimmed.mean())
+
+ 	def prewittGX(self):
+ 		Mx = np.array([[-1,0,1], [-1,0,1], [-1,0,1]])
+ 		if self.width >=3:
+ 			tempWindow = self.content
+ 			gxWin = np.sum(np.sum(np.multiply(Mx,tempWindow)))
+ 			return gxWin
+ 		else:
+ 			return 0
+
+ 	def prewittGY(self):
+ 		My = np.array([[-1,-1,-1], [0,0,0], [1,1,1]])
+ 		if self.width >=3:
+ 			tempWindow = self.content
+ 			gyWin = np.sum(np.sum(np.multiply(My,tempWindow)))
+ 			return gyWin
+ 		else:
+ 			return 0
+
+ 	def sobelGX(self):
+ 		Mx = np.array([[-1,0,1], [-2,0,2], [-1,0,1]])
+ 		if self.width >=3:
+ 			tempWindow = self.content
+ 			gxWin = np.sum(np.sum(np.multiply(Mx,tempWindow)))
+ 			return gxWin
+ 		else:
+ 			return 0
+
+ 	def sobelGY(self):
+ 		My = np.array([[-1,-2,-1], [0,0,0], [1,2,1]])
+ 		if self.width >=3:
+ 			tempWindow = self.content
+ 			gyWin = np.sum(np.sum(np.multiply(My,tempWindow)))
+ 			return gyWin
+ 		else:
+ 			return 0
+
+ 	def hysterise(self, margin):
+ 		centreVal = self.content[self.cp, self.cp]
+ 		maxVal = np.amax(self.content)
+
+ 		if (centreVal + margin) > maxVal:
+ 			self.content.fill(maxVal)
+		else:
+			self.content.fill(0)
+
+	def adaptiveMedian(self, c, midweight):
+		#Not Working
+		if not (self.content.mean() == 0):
+			snrInvert = self.content.std() / self.content.mean()
+			imWidth = int(self.width)
+			# Generate a blank matrix to populate with the weights
+			weightings = np.zeros((imWidth, imWidth))
+
+			occurences = np.zeros((256,1))
+
+			# Generate the weights matrix
+			for i in range(imWidth):
+				for j in range(imWidth):
+					distance = ((self.cp - i -1)**2 + (self.cp - j - 1)**2)**0.5
+					weight = int(midweight - (c * distance * snrInvert))
+					weight = int(np.amax([0, weight]))
+					weightings[i,j] = int(weight)
+
+
+			flatIm		= self.content.flatten()
+			flatWeight	= weightings.flatten()
+			linkedWin = [self.content.flatten(), weightings.flatten()]
+
+			sortedIndices = np.argsort(linkedWin[0])
+			sortedIm = flatIm[sortedIndices]
+			sortedWeight = flatWeight[sortedIndices]
+
+	
+			cumOcc = np.cumsum(sortedWeight)
+			totalOcc = np.sum(flatWeight)
+			index = np.argmax(cumOcc>(totalOcc/2))
+			medianVal = sortedIm[index]
 
 
 
-		order = values.argsort()
-		ranks = order.argsort()
-
-		print(str(ranks))
+		else:
+			medianVal = 0
+		self.content.fill(medianVal)
 
 
 
@@ -114,9 +203,6 @@ class Image:
 	"""
 	def __init__(self, *args):
 		# Constructor for the class
-
-		### Should redo such that importing the image is a seperate step to constructing the shell
-
 		# Generate a list of files within the current directory for validation
 		listOfFiles = self._listFiles()
 
@@ -205,6 +291,20 @@ class Image:
 		# [amount,(imageM - amount)], [amount,(imageN - amount)]
 		self.updateImage(debordered, 'deBordered')
 
+	def createWindows(self, windowSize):
+		## Function to create an array containing NxN sized window structures for the whole image
+		imageM, imageN = self.imageSize()
+
+		windowArray = []
+
+		for i in range(windowSize,(imageM-windowSize)):
+			for j in range(windowSize,(imageN-windowSize)):
+				windowArray.append( Window(self,[i,j],windowSize))
+
+		__printSpacer__(str(len(windowArray)) +' windows of size ' + str(windowSize*2 +1) +'x'+str(windowSize*2 +1)+ ' created from image')
+
+		return windowArray
+		
 
 	##########################################
 	##										##
@@ -232,8 +332,8 @@ class Image:
 				newImage[i,j] = self.image[i,j]
 		newStruct.image = newImage
 		
-		newStruct.name = 'Duplicate' + self.name
-		newStruct.transforms = self.transforms + ['Duplicate']
+		newStruct.name = self.name
+		newStruct.transforms = self.transforms
 		return newStruct
 
 	def mask(self, mask):
@@ -251,6 +351,10 @@ class Image:
 		# Combine the two masked images
 		self.image = self.image + imageOver.image
 
+	def snrRatio(self):
+		a = self.image.mean() / self.image.std()
+		print(a)
+		return a
 
 	##########################################
 	##										##
@@ -282,7 +386,6 @@ class Image:
 		for i in range(imageM):
 			for j in range(imageN):
 				nkCount[self.image[i,j]] = nkCount[self.image[i,j]] + 1.0
-
 
 		# Calculate probability of occurence
 		probRk = nkCount / imageMN
@@ -348,11 +451,9 @@ class Image:
 				occurenceMap[nVal] = (self.image==nVal).sum()
 				pixelCount += occurenceMap[nVal]
 
-
 		for n in range(256):
 			## Generating incredibly low values for percentage chance (sigma function missing)
 			greyScaleMap[n] =  ((np.sum(occurenceMap[0:n]) / pixelCount ) * (levels-1)) + offset
-
 
 		for si in range(imageM):
 			for sj in range(imageN):
@@ -401,29 +502,12 @@ class Image:
 		# Re normalise results to the range of grayscale values
 		self.POnormalise(0,255)
 
-
-		
-
 	##########################################
 	##										##
 	## Methods (Group Operator Filters)		##
 	##										##
 	##########################################
 
-	def createWindows(self, windowSize):
-		## Function to create an array containing NxN sized window structures for the whole image
-		imageM, imageN = self.imageSize()
-
-		windowArray = []
-
-		for i in range(windowSize,(imageM-windowSize)):
-			for j in range(windowSize,(imageN-windowSize)):
-				windowArray.append( Window(self,[i,j],windowSize))
-
-		__printSpacer__(str(len(windowArray)) +' windows of size ' + str(windowSize*2 +1) +'x'+str(windowSize*2 +1)+ ' created from image')
-
-		return windowArray
-		
 	def GOmean(self,windowSize):
 
 		windowArray = self.createWindows(windowSize)
@@ -438,6 +522,20 @@ class Image:
 
 		self.updateImage(newImage, 'mean')
 
+	def GOsnr(self,windowSize):
+
+		windowArray = self.createWindows(windowSize)
+
+		imageM, imageN = self.imageSize()
+
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		for window in windowArray:
+			window.snr()
+			newImage[window.x, window.y] = window.cpVal()
+
+		self.updateImage(newImage, 'snrCompare_' + str(windowSize))
+
 	def GOlinearGaussian(self, sigma):
 
 		winSize = 2*(3*sigma) + 1
@@ -447,7 +545,6 @@ class Image:
 		imageM, imageN = self.imageSize()
 
 		windowArray = self.createWindows(3*sigma)
-
 
 		newImage = np.zeros([imageM, imageN],'uint8')
 
@@ -466,11 +563,9 @@ class Image:
 				gausMask[winSize-i-1,j] = gVal
 				gausMask[winSize-i-1,winSize-j-1] = gVal
 
-
-
 		# Apply guasian mask
 		for window in windowArray:
-			window.filter(gausMask)
+			window.gfilter(gausMask)
 			newImage[window.x, window.y] = window.cpVal()
 
 		self.updateImage(newImage, 'Gaussian')
@@ -492,6 +587,20 @@ class Image:
 			newImage[window.x, window.y] = window.cpVal()
 
 		self.updateImage(newImage, 'equaliseWindowedHistogram' + '_' + str(levels) + '_' + str(ignore) + '_' + str(offset))
+
+	def GOhysterise(self,windowSize,margin):
+
+		windowArray = self.createWindows(windowSize)
+
+		imageM, imageN = self.imageSize()
+
+		newImage = np.zeros([imageM, imageN],'uint8')
+
+		for window in windowArray:
+			window.hysterise(margin)
+			newImage[window.x, window.y] = window.cpVal()
+
+		self.updateImage(newImage, 'hysterise')
 
 	##########################################
 	##										##
@@ -515,7 +624,6 @@ class Image:
 		self.updateImage(newImage, 'Median Filter: r=' + str(winSize))
 		self._deBorders(winSize+1)
 
-
 	def NLmeanTrimmed(self, winSize,trim):
 		self._genBorders(winSize+1)	
 
@@ -533,41 +641,103 @@ class Image:
 			window.trimmedMean(trim)
 			newImage[window.x, window.y] = window.cpVal()
 
-		self.updateImage(newImage, 'Trimmed Mean Filter: r=' + str(winSize))
+		self.updateImage(newImage, 'Trimmed Mean Filter: r=' + str(winSize) + 'Omit=' + str(trim))
 		self._deBorders(winSize+1)
 
-	def NLmedianHuang(self,winSize):
-		## Code found in https://nomis80.org/ctmf.pdf
-		## Not original code
-		self._genBorders(winSize+1)
-
+	def NLadweightmedian(self, winSize, midweight, cVal):
+		self._genBorders(winSize+1)	
 
 		imageM, imageN = self.imageSize()
 
+		windowArray = self.createWindows(winSize)
+	
 		newImage = np.zeros([imageM, imageN],'uint8')
-		histogram = np.zeros([256])
-		weightings = array(range(0,256))
+	
+		for window in windowArray:
+			window.adaptiveMedian(cVal,midweight)
+			newImage[window.x, window.y] = window.cpVal()
 
-		for i in range(2*winSize):
-			for j in range(2*winSize):
-				histogram[self.image[(i),(j)]] += 1
-
-		for i in range(winSize,(imageM-winSize)):
-			for j in range(winSize,(imageN-winSize)):
-				for k in range(-winSize,winSize):
-					histogram[self.image[(i+k),(j-winSize-1)]] -= 1
-					histogram[self.image[(i+k),(j+winSize)]] += 1
-				newImage[i,j] = np.median(histogram * weightings)
-
-		self.updateImage(newImage,'HuangMedian')
+		self.updateImage(newImage, 'Adaptive Median Filter: r=' + str(winSize))
 		self._deBorders(winSize+1)
 
 
+	##########################################
+	##										##
+	## Methods (Edge Detect Filters)		##
+	##										##
+	##########################################
 
+	def EDGEgradientsPrewitt(self, min):
+		self._genBorders(2)	
 
+		imageM, imageN = self.imageSize()
 
+		windowArray = self.createWindows(1)
+	
+		newImage = np.zeros([imageM, imageN],'uint8')
+		thetaImage = np.zeros([imageM, imageN],'uint8')
+		blankImage = np.zeros([imageM, imageN],np.uint8)
 
+		# For each window run the two directions of the edge detectors
+		for window in windowArray:
+			Gx = window.prewittGX()
+			Gy = window.prewittGY()
+			G  = sqrt(Gx**2 + Gy**2)
+			if G > 255:
+				G = 255
+			elif G < min:
+				G = 0
 
+			newImage[window.x, window.y] = G
+			thetaImage[window.x, window.y] = 90+(90*atan2(Gy, Gx)/np.pi)
+
+		# Create a RGB version of the image, convert to HSV and replace the H values with that of the theta values
+		# Saturation set to max for visibility. Converted back to RGB for display
+		BGR = np.dstack((newImage, newImage, newImage))
+		HSV = cv2.cvtColor(BGR, cv2.COLOR_BGR2HSV)
+		HSV[:,:,0] = thetaImage
+		HSV[:,:,1] = 255- blankImage
+		final = cv2.cvtColor(HSV, cv2.COLOR_HSV2BGR)
+
+		# Update the image with the edge detected image
+		self.updateImage(final, 'EDGEprewitt')
+
+	def EDGEgradientsSobel(self,min):
+		self._genBorders(2)	
+
+		imageM, imageN = self.imageSize()
+
+		windowArray = self.createWindows(1)
+	
+		newImage = np.zeros([imageM, imageN],np.uint8)
+		thetaImage = np.zeros([imageM, imageN],np.uint8)
+		blankImage = np.zeros([imageM, imageN],np.uint8)
+
+		# For each window run the two directions of the edge detectors
+		for window in windowArray:
+			Gx = window.sobelGX()
+			Gy = window.sobelGY()
+			G  = sqrt(Gx**2 + Gy**2)
+			if G > 255:
+				G = 255
+			elif G < min:
+				G = 0
+
+			newImage[window.x, window.y] = G
+			thetaImage[window.x, window.y] = 90+(90*atan2(Gy, Gx)/np.pi)
+
+		# Create a RGB version of the image, convert to HSV and replace the H values with that of the theta values
+		# Saturation set to max for visibility. Converted back to RGB for display
+		BGR = np.dstack((newImage, newImage, newImage))
+		HSV = cv2.cvtColor(BGR, cv2.COLOR_BGR2HSV)
+		HSV[:,:,0] = thetaImage
+		HSV[:,:,1] = 255- blankImage
+		final = cv2.cvtColor(HSV, cv2.COLOR_HSV2BGR)
+
+		# Update the image with the edge detected image
+		self.updateImage(final, 'EDGESobel' +str(min))
+
+		
 
 
 	##########################################
@@ -577,6 +747,7 @@ class Image:
 	##########################################
 
 	def highlightRange(self,lBound,uBound,dcGain,levels):
+		# Example function to highlight a range of values
 		mask = self.PObitSlice(lBound,uBound)
 		rangePixels = self.duplicate()
 		rangePixels.mask(mask)
@@ -585,35 +756,25 @@ class Image:
 		self.overlay(rangePixels,mask)
 
 	def VisualiseFFT(self):
+		# Example function to visualise the FFT of an image
 		self.POfftMag()
 		self.POnormalise(0,255)
-
-
-
-
-
-
-
 
 
 def __printSpacer__(*args):
 	# Function created to print a line of asterix, made seperate to make code neater
 	if (0 == len(args)): # If no arguments are included then print an asterix line spacer
-		print('************************************************************************************')
+		print('*****************************************************')
 		print('')
 	else:				# If arguments are provided then print the argument surrounded by asterix'
 		for i in range(len(args)):
-			print('************************************************************************************')
+			print('*****************************************************')
 			print('')
 			print(args[i])
 			print('')
 
 	
 	
-
-
-
-
 
 
 # a = Image('foetus.png')
@@ -624,14 +785,86 @@ def __printSpacer__(*args):
 # imshow('image', a.image)
 # waitKey(0)
 # destroyAllWindows()
-
-
+imageProc = 'PerfectNJ.png'
+# imageProc = 'DropZone.png'
+# imageProc = 'foetusNoise2.png'
+# imageProc = 'Fix.png'
 #a = Image('test.png')
-a = Image('foetus.png')
+# a = Image('NZjers1.png')
+# b = Image('NZjers1.png')
+# a = Image('DropZone.png')
+# a = Image('foetusNoise2.png')
+# b = Image('foetusNoise2.png')
+# b = Image('foetus.png')
 
-a.NLmeanTrimmed(1, 0)
 
-a.showImage()
+a = Image(imageProc)
+# b = Image(imageProc)
+# c = Image(imageProc)
+# d = Image(imageProc)
+
+# a.NLadweightmedian(10,100,10)
+# b.NLadweightmedian(10,100,20)
+# c.NLadweightmedian(10,200,20)
+# # d.NLadweightmedian(5,50,5)
+
+
+
+cap = cv2.VideoCapture(0)
+
+while(True):
+# Capture frame-by-frame
+	ret, frame = cap.read()
+	a.updateImage(frame, '')
+
+
+	a.EDGEgradientsSobel(10)
+
+	# Display the resulting frame
+	cv2.imshow('frame',a.image)
+	if cv2.waitKey(10) & 0xFF == ord('q'):
+		break
+
+# a.NLmedian(7)
+# b.NLmedian(7)
+# # a.NLmeanTrimmed(7,15)
+# c.POequalise(255,[0],0)
+# c.NLmedian(10)
+
+
+
+# d.POequalise(255,[0],0)
+# b.NLmeanTrimmed(7,30)
+# d.NLmeanTrimmed(7,30)
+# c.NLmeanTrimmed(7,45)
+
+# b.NLmedian(10)
+
+# d.NLmedian(7)
+
+# b.saveImage()
+# c.saveImage()
+# d.saveImage()
+
+# a.showImage()
+# a.NLmedian(1)
+# a.showImage()
+# a.POequalise(5,[0], 50)
+# a.POnormalise(0, 255)
+# a.showImage()
+# b.showImage()
+# b = a.duplicate()
+
+# a.EDGEgradientsPrewitt(100)
+
+
+# b.EDGEgradientsSobel(100)
+
+# a.showImage()
+# a.GOhysterise(5, 50)
+# a.showImage()
+
+
 
 #a = Image('NZjers1.png')
 #b = Image('NZjers1.png')`
@@ -639,13 +872,19 @@ a.showImage()
 #b = Image('foetus.png')
 
 
+"""
+for i in range(1,11):
+	a = Image('foetus.png')
+	a.NLmedian(i)
+	a.GOsnr(i)
+	a.POnormalise(0,255)
+	a.saveImage()
+	b = Image('NZjers1.png')
+	b.NLmedian(i)
+	b.GOsnr(i)
+	b.POnormalise(0,255)
+	b.saveImage()
 
-# for i in range(0,11):
-# 	a = Image('foetus.png')
-# 	a.NLmedian(i)
-# 	a.saveImage()
-# 	b = Image('NZjers1.png')
-# 	b.NLmedian(i)
-# 	b.saveImage()
+	"""
 
 

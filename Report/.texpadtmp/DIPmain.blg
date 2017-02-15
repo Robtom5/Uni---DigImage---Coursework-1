@@ -1,0 +1,52 @@
+This is BibTeX, Version 0.99d (TeX Live 2015)
+Capacity: max_strings=35307, hash_size=35307, hash_prime=30011
+The top-level auxiliary file: /Users/RobThomas/Documents/Uni/Fourth Year/DIP/Uni - DigImage - Coursework 1/Report/.texpadtmp/DIPmain.aux
+The style file: abbrv.bst
+Database file #1: ../bib.bib
+Warning--entry type for "Thomas:aa" isn't style-file defined
+--line 23 of file ../bib.bib
+Warning--entry type for "Evans:aa" isn't style-file defined
+--line 29 of file ../bib.bib
+Warning--can't use both author and editor fields in Gonzalez:2016aa
+You've used 3 entries,
+            2118 wiz_defined-function locations,
+            515 strings with 4218 characters,
+and the built_in function-call counts, 853 in all, are:
+= -- 75
+> -- 27
+< -- 2
++ -- 11
+- -- 8
+* -- 41
+:= -- 131
+add.period$ -- 7
+call.type$ -- 3
+change.case$ -- 12
+chr.to.int$ -- 0
+cite$ -- 4
+duplicate$ -- 37
+empty$ -- 85
+format.name$ -- 8
+if$ -- 191
+int.to.chr$ -- 0
+int.to.str$ -- 3
+missing$ -- 2
+newline$ -- 16
+num.names$ -- 6
+pop$ -- 25
+preamble$ -- 1
+purify$ -- 10
+quote$ -- 0
+skip$ -- 39
+stack$ -- 0
+substring$ -- 43
+swap$ -- 14
+text.length$ -- 2
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 10
+warning$ -- 1
+while$ -- 8
+width$ -- 4
+write$ -- 27
+(There were 3 warnings)
